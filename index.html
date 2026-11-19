@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111">
+<title>Hut &amp; Bart AR</title>
+<style>
+
+  :root{
+    --bg:#0e0e10; --panel:rgba(18,18,22,.82); --fg:#f5f2ea; --muted:#a9a59b;
+    --accent:#ffb627; --accent2:#e8505b;
+    --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:manipulation}
+  #stage{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;display:block}
+  video{display:none}
+
+  /* Startbildschirm */
+  #start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:18px;padding:24px;text-align:center;
+    background:radial-gradient(circle at 50% 35%,#2a2320 0%,#0e0e10 70%);z-index:20}
+  #start h1{font-size:clamp(30px,8vw,52px);margin:0;letter-spacing:-.02em;line-height:1.05}
+  #start h1 span{color:var(--accent)}
+  #start p{margin:0;color:var(--muted);max-width:30em;line-height:1.5}
+  #logo{width:170px;height:150px}
+  .big{font:600 18px/1 inherit;font-family:inherit;padding:16px 28px;border-radius:999px;border:0;
+    background:var(--accent);color:#1a1307;cursor:pointer;min-width:220px}
+  .big.secondary{background:transparent;color:var(--fg);border:1.5px solid #ffffff40}
+  #status{min-height:1.4em;color:var(--accent);font-size:14px}
+
+  /* Bedienleiste */
+  #ui{position:fixed;inset:0;pointer-events:none;z-index:10;display:none}
+  #top{position:absolute;top:calc(10px + var(--safe-t));left:10px;right:10px;display:flex;justify-content:space-between;gap:8px}
+  .pill{pointer-events:auto;background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    color:var(--fg);border:0;border-radius:999px;padding:10px 14px;font:600 14px/1 inherit;font-family:inherit;
+    display:flex;align-items:center;gap:6px;cursor:pointer}
+  .pill.on{background:var(--accent);color:#1a1307}
+  .group{display:flex;gap:8px}
+  #hint{position:absolute;top:calc(64px + var(--safe-t));left:50%;transform:translateX(-50%);
+    background:var(--panel);padding:8px 14px;border-radius:999px;font-size:13px;color:var(--muted);
+    transition:opacity .4s;white-space:nowrap}
+  #bottom{position:absolute;left:0;right:0;bottom:0;padding:10px 0 calc(12px + var(--safe-b));
+    background:linear-gradient(to top,rgba(0,0,0,.75),rgba(0,0,0,0));pointer-events:auto}
+  .rowlabel{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:0 16px 4px}
+  .row{display:flex;gap:8px;overflow-x:auto;padding:2px 16px 10px;scrollbar-width:none}
+  .row::-webkit-scrollbar{display:none}
+  .item{flex:0 0 auto;width:62px;height:62px;border-radius:16px;background:var(--panel);border:2px solid transparent;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+  .item.sel{border-color:var(--accent);background:#2b2416}
+  .item canvas{width:52px;height:52px}
+  .item .none{font-size:22px;color:var(--muted)}
+  #shutterWrap{display:flex;justify-content:center;padding-top:2px}
+  #shutter{width:68px;height:68px;border-radius:50%;border:4px solid #fff;background:#ffffff30;cursor:pointer}
+  #shutter:active{background:#fff}
+
+  /* Foto-Vorschau */
+  #shot{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:30;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;padding:20px calc(20px) calc(20px + var(--safe-b))}
+  #shot img{max-width:100%;max-height:70vh;border-radius:14px;box-shadow:0 10px 40px #000}
+  #shot .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  #shot small{color:var(--muted)}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:25;transition:opacity .25s}
+  #toast{position:fixed;left:50%;bottom:calc(200px + var(--safe-b));transform:translateX(-50%);
+    background:var(--panel);padding:10px 16px;border-radius:999px;font-size:14px;z-index:40;opacity:0;transition:opacity .3s;pointer-events:none}
+
+  #directBox[hidden]{display:none!important}
+  .big:disabled{opacity:.5}
+  #saveWrap{display:flex;justify-content:center;padding-top:2px}
+  #progress{width:220px;height:6px;border-radius:3px;background:#ffffff20;overflow:hidden}
+  #progress i{display:block;height:100%;width:30%;background:var(--accent);border-radius:3px;animation:slide 1.2s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(330%)}}
+  #start .note{font-size:13px;color:#8d887e;max-width:26em}
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+<video id="video" playsinline muted autoplay></video>
+<input id="fileCam" type="file" accept="image/*" capture="user" hidden>
+<input id="fileLib" type="file" accept="image/*" hidden>
+
+<div id="start">
+  <canvas id="logo" width="340" height="300"></canvas>
+  <h1>Hut <span>&amp;</span> Bart</h1>
+  <p>Mach ein Foto von einer oder mehreren Personen – jedes Gesicht bekommt automatisch einen Hut und einen Schnurrbart.</p>
+  <button class="big" id="btnLive" style="display:none">🎥 Live-AR starten</button>
+  <div id="directBox" hidden style="display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:340px">
+    <a class="big" id="direct" target="_top" style="text-decoration:none;text-align:center;box-sizing:border-box;display:block">🎥 Live-AR: Seite direkt öffnen</a>
+    <div class="note">Falls sich nichts öffnet: Link kopieren und in Chrome oder Safari einfügen.</div>
+    <div style="display:flex;gap:8px;width:100%">
+      <input id="directUrl" readonly style="flex:1;min-width:0;background:#ffffff12;border:1px solid #ffffff30;color:var(--fg);border-radius:10px;padding:10px;font-size:13px">
+      <button class="pill" id="btnCopy" style="background:var(--accent);color:#1a1307">Kopieren</button>
+    </div>
+  </div>
+  <button class="big" id="btnCam">📷 Foto aufnehmen</button>
+  <button class="big secondary" id="btnLib">🖼️ Aus Galerie wählen</button>
+  <div id="progress" style="display:none"><i></i></div>
+  <div id="status"></div>
+</div>
+
+<div id="ui">
+  <div id="top">
+    <div class="group">
+      <button class="pill" id="btnNewCam">📷 Neu</button>
+      <button class="pill" id="btnNewLib">🖼️ Galerie</button>
+      <button class="pill" id="btnFlip" style="display:none">🔄</button>
+    </div>
+    <div class="group">
+      <button class="pill" id="btnMix" title="Jede Person bekommt etwas anderes">🎲 Mix</button>
+    </div>
+  </div>
+  <div id="hint">Suche Gesichter …</div>
+  <div id="bottom">
+    <div class="rowlabel">Hüte</div>
+    <div class="row" id="hatRow"></div>
+    <div class="rowlabel">Bärte</div>
+    <div class="row" id="stacheRow"></div>
+    <div id="shutterWrap" style="display:none"><button id="shutter" aria-label="Foto aufnehmen"></button></div>
+    <div id="saveWrap"><button class="big" id="btnExport">Bild speichern</button></div>
+  </div>
+</div>
+
+<div id="flash"></div>
+<div id="toast"></div>
+
+<div id="shot">
+  <img id="shotImg" alt="Fertiges Bild">
+  <div class="btns">
+    <button class="big" id="btnSave">Speichern</button>
+    <button class="big secondary" id="btnClose">Schließen</button>
+  </div>
+  <small>Tipp: Auf dem Handy kannst du das Bild auch lange drücken, um es zu sichern.</small>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+<script>
+/* =========================================================================
+   Hut & Bart AR – Gesichtserkennung mit MediaPipe Face Mesh (lokal mitgeliefert),
+   Accessoires als Vektorgrafik direkt aufs Canvas gezeichnet.
+   ========================================================================= */
+const MAX_FACES = 6;
+const $ = id => document.getElementById(id);
+const stage = $("stage"), ctx = stage.getContext("2d");
+const video = $("video");
+
+function ellipse(c,x,y,rx,ry){ c.beginPath(); c.ellipse(x,y,rx,ry,0,0,Math.PI*2); }
+
+const HATS = [
+  { id:"none", name:"Ohne" },
+  { id:"top", name:"Zylinder", draw(c,w){
+      // Krempe hinten
+      c.fillStyle="#141414"; ellipse(c,0,0,w*.62,w*.13); c.fill();
+      // Körper
+      const bw=w*.40, h=w*.85;
+      c.fillStyle="#1d1d1f";
+      c.beginPath(); c.moveTo(-bw,0); c.lineTo(-bw*1.04,-h); c.lineTo(bw*1.04,-h); c.lineTo(bw,0); c.closePath(); c.fill();
+      // Deckel
+      c.fillStyle="#2a2a2e"; ellipse(c,0,-h,bw*1.04,w*.08); c.fill();
+      // Band
+      c.fillStyle="#c62d42"; c.beginPath(); c.moveTo(-bw,-w*.02); c.lineTo(-bw*1.01,-w*.17); c.lineTo(bw*1.01,-w*.17); c.lineTo(bw,-w*.02); c.closePath(); c.fill();
+      // Glanz
+      c.fillStyle="rgba(255,255,255,.08)"; c.fillRect(-bw*.75,-h,bw*.22,h-w*.17);
+      // Krempe vorne
+      c.fillStyle="#141414"; c.beginPath(); c.ellipse(0,0,w*.62,w*.13,0,0,Math.PI); c.fill();
+  }},
+  { id:"party", name:"Partyhut", draw(c,w){
+      const b=w*.36, h=w*1.0;
+      c.save();
+      c.beginPath(); c.moveTo(-b,0); c.lineTo(0,-h); c.lineTo(b,0); c.quadraticCurveTo(0,w*.1,-b,0); c.closePath();
+      c.fillStyle="#2bb3a3"; c.fill(); c.clip();
+      const cols=["#ffd23f","#ee4266","#3bceac","#540d6e"];
+      for(let i=0;i<8;i++){ c.strokeStyle=cols[i%4]; c.lineWidth=w*.07;
+        c.beginPath(); c.moveTo(-w,-h*i/7+w*.3); c.lineTo(w,-h*i/7-w*.3); c.stroke(); }
+      c.fillStyle="#fff";
+      for(let i=0;i<14;i++){ const x=(Math.sin(i*12.9)*.5)*b*1.6, y=-((i*37)%100)/100*h*.85; ellipse(c,x,y,w*.018,w*.018); c.fill(); }
+      c.restore();
+      // Bommel
+      c.fillStyle="#ffd23f"; for(let i=0;i<10;i++){ const a=i/10*Math.PI*2; ellipse(c,Math.cos(a)*w*.06,-h+Math.sin(a)*w*.06,w*.05,w*.05); c.fill(); }
+      c.fillStyle="#ee4266"; ellipse(c,0,-h,w*.06,w*.06); c.fill();
+  }},
+  { id:"cowboy", name:"Cowboy", draw(c,w){
+      // Krempe
+      c.fillStyle="#7a4a24";
+      c.beginPath(); c.moveTo(-w*.85,-w*.18); c.quadraticCurveTo(-w*.7,w*.08,0,w*.06); c.quadraticCurveTo(w*.7,w*.08,w*.85,-w*.18);
+      c.quadraticCurveTo(w*.6,-w*.02,0,-w*.06); c.quadraticCurveTo(-w*.6,-w*.02,-w*.85,-w*.18); c.closePath(); c.fill();
+      // Krone
+      c.fillStyle="#8d5a2e";
+      c.beginPath(); c.moveTo(-w*.38,-w*.04); c.quadraticCurveTo(-w*.46,-w*.45,-w*.3,-w*.58);
+      c.quadraticCurveTo(-w*.12,-w*.5,0,-w*.56); c.quadraticCurveTo(w*.12,-w*.5,w*.3,-w*.58);
+      c.quadraticCurveTo(w*.46,-w*.45,w*.38,-w*.04); c.closePath(); c.fill();
+      // Delle
+      c.strokeStyle="#6a3d1c"; c.lineWidth=w*.025; c.beginPath(); c.moveTo(0,-w*.52); c.quadraticCurveTo(-w*.02,-w*.36,0,-w*.24); c.stroke();
+      // Band
+      c.fillStyle="#2a1a0e"; c.beginPath(); c.moveTo(-w*.385,-w*.06); c.lineTo(-w*.4,-w*.15); c.quadraticCurveTo(0,-w*.12,w*.4,-w*.15); c.lineTo(w*.385,-w*.06); c.quadraticCurveTo(0,-w*.02,-w*.385,-w*.06); c.fill();
+      c.fillStyle="#e9c46a"; ellipse(c,w*.2,-w*.1,w*.035,w*.035); c.fill();
+  }},
+  { id:"crown", name:"Krone", draw(c,w){
+      const b=w*.42, h=w*.5;
+      const g=c.createLinearGradient(0,-h,0,0); g.addColorStop(0,"#ffe680"); g.addColorStop(1,"#d49a00");
+      c.fillStyle=g;
+      c.beginPath(); c.moveTo(-b,0); c.lineTo(-b,-h*.55); c.lineTo(-b*.6,-h*.2); c.lineTo(-b*.4,-h);
+      c.lineTo(0,-h*.35); c.lineTo(b*.4,-h); c.lineTo(b*.6,-h*.2); c.lineTo(b,-h*.55); c.lineTo(b,0); c.closePath(); c.fill();
+      c.strokeStyle="#9c6f00"; c.lineWidth=w*.015; c.stroke();
+      c.fillStyle="#b8860b"; c.fillRect(-b,-w*.1,b*2,w*.1);
+      const gems=["#e63946","#2a9d8f","#e63946"]; [-b*.55,0,b*.55].forEach((x,i)=>{ c.fillStyle=gems[i]; ellipse(c,x,-w*.05,w*.04,w*.035); c.fill(); });
+      c.fillStyle="#fff"; [[-b*.4,-h],[b*.4,-h],[-b,-h*.55],[b,-h*.55]].forEach(([x,y])=>{ ellipse(c,x,y,w*.035,w*.035); c.fill(); });
+  }},
+  { id:"wizard", name:"Zauberer", draw(c,w){
+      c.fillStyle="#3d2c8d"; ellipse(c,0,0,w*.6,w*.12); c.fill();
+      c.fillStyle="#4b38a8";
+      c.beginPath(); c.moveTo(-w*.36,-w*.02); c.quadraticCurveTo(-w*.2,-w*.7,w*.05,-w*1.0);
+      c.quadraticCurveTo(w*.3,-w*1.15,w*.5,-w*.95); c.quadraticCurveTo(w*.2,-w*.95,w*.14,-w*.7);
+      c.quadraticCurveTo(w*.3,-w*.3,w*.36,-w*.02); c.closePath(); c.fill();
+      // Sterne
+      const star=(x,y,r,col)=>{ c.fillStyle=col; c.beginPath(); for(let i=0;i<10;i++){ const a=-Math.PI/2+i*Math.PI/5, rr=i%2?r*.45:r; c.lineTo(x+Math.cos(a)*rr,y+Math.sin(a)*rr);} c.closePath(); c.fill(); };
+      star(-w*.12,-w*.3,w*.07,"#ffd23f"); star(w*.12,-w*.52,w*.05,"#fff"); star(-w*.02,-w*.72,w*.045,"#ffd23f"); star(w*.2,-w*.16,w*.04,"#fff");
+      c.fillStyle="#2c1f6b"; c.beginPath(); c.ellipse(0,0,w*.6,w*.12,0,0,Math.PI); c.fill();
+  }},
+  { id:"santa", name:"Weihnachten", draw(c,w){
+      c.fillStyle="#d62828";
+      c.beginPath(); c.moveTo(-w*.42,-w*.05); c.quadraticCurveTo(-w*.25,-w*.75,w*.15,-w*.7);
+      c.quadraticCurveTo(w*.5,-w*.62,w*.62,-w*.25); c.quadraticCurveTo(w*.45,-w*.42,w*.3,-w*.4);
+      c.quadraticCurveTo(w*.38,-w*.2,w*.42,-w*.05); c.closePath(); c.fill();
+      c.fillStyle="rgba(0,0,0,.15)"; c.beginPath(); c.moveTo(w*.1,-w*.66); c.quadraticCurveTo(w*.38,-w*.5,w*.42,-w*.05); c.lineTo(w*.3,-w*.05); c.quadraticCurveTo(w*.3,-w*.4,w*.1,-w*.66); c.fill();
+      // Fellrand
+      c.fillStyle="#fbfbfb";
+      for(let i=0;i<=12;i++){ const x=-w*.46+i*w*.92/12; ellipse(c,x,-w*.03+Math.sin(i*2.1)*w*.01,w*.075,w*.08); c.fill(); }
+      // Bommel
+      for(let i=0;i<8;i++){ const a=i/8*Math.PI*2; ellipse(c,w*.62+Math.cos(a)*w*.05,-w*.22+Math.sin(a)*w*.05,w*.06,w*.06); c.fill(); }
+  }},
+  { id:"pirate", name:"Pirat", draw(c,w){
+      c.fillStyle="#151515";
+      c.beginPath(); c.moveTo(-w*.75,-w*.12); c.quadraticCurveTo(-w*.55,-w*.62,0,-w*.6); c.quadraticCurveTo(w*.55,-w*.62,w*.75,-w*.12);
+      c.quadraticCurveTo(w*.4,w*.06,0,w*.02); c.quadraticCurveTo(-w*.4,w*.06,-w*.75,-w*.12); c.closePath(); c.fill();
+      c.strokeStyle="#d4a017"; c.lineWidth=w*.03;
+      c.beginPath(); c.moveTo(-w*.72,-w*.13); c.quadraticCurveTo(-w*.4,w*.03,0,0); c.quadraticCurveTo(w*.4,w*.03,w*.72,-w*.13); c.stroke();
+      // Totenkopf
+      c.fillStyle="#f2f2f2"; ellipse(c,0,-w*.32,w*.1,w*.09); c.fill(); c.fillRect(-w*.055,-w*.27,w*.11,w*.07);
+      c.fillStyle="#151515"; ellipse(c,-w*.04,-w*.33,w*.025,w*.03); c.fill(); ellipse(c,w*.04,-w*.33,w*.025,w*.03); c.fill();
+      c.strokeStyle="#f2f2f2"; c.lineWidth=w*.03; c.lineCap="round";
+      c.beginPath(); c.moveTo(-w*.17,-w*.17); c.lineTo(w*.17,-w*.06); c.moveTo(w*.17,-w*.17); c.lineTo(-w*.17,-w*.06); c.stroke();
+  }},
+  { id:"bunny", name:"Hasenohren", draw(c,w){
+      const ear=(s)=>{ c.save(); c.scale(s,1); c.rotate(.18);
+        c.fillStyle="#f3eee8"; ellipse(c,w*.2,-w*.42,w*.13,w*.42); c.fill();
+        c.fillStyle="#f7a8b8"; ellipse(c,w*.2,-w*.42,w*.07,w*.33); c.fill(); c.restore(); };
+      ear(1); ear(-1);
+      c.fillStyle="#e85d75"; c.beginPath(); c.ellipse(0,-w*.02,w*.45,w*.05,0,Math.PI,0); c.lineTo(w*.45,0); c.lineTo(-w*.45,0); c.fill();
+  }},
+];
+
+// Bärte: halbe Kontur für rechte Seite zeichnen, dann spiegeln
+function sym(c, half){ half(c); c.save(); c.scale(-1,1); half(c); c.restore(); }
+
+const STACHES = [
+  { id:"none", name:"Ohne" },
+  { id:"handlebar", name:"Zwirbel", draw(c,w){
+      c.fillStyle="#2b1b10";
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,-w*.03);
+        c.bezierCurveTo(w*.12,-w*.09,w*.22,-w*.02,w*.3,w*.0);
+        c.bezierCurveTo(w*.38,w*.02,w*.43,-w*.05,w*.41,-w*.12);
+        c.bezierCurveTo(w*.46,-w*.06,w*.44,w*.06,w*.33,w*.06);
+        c.bezierCurveTo(w*.22,w*.06,w*.12,w*.07,0,w*.04); c.closePath(); c.fill(); });
+  }},
+  { id:"chevron", name:"Klassisch", draw(c,w){
+      c.fillStyle="#3a2414";
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,-w*.05);
+        c.quadraticCurveTo(w*.16,-w*.08,w*.25,w*.0);
+        c.quadraticCurveTo(w*.29,w*.07,w*.27,w*.11);
+        c.quadraticCurveTo(w*.15,w*.06,0,w*.07); c.closePath(); c.fill(); });
+      c.strokeStyle="rgba(255,255,255,.08)"; c.lineWidth=w*.01;
+      for(let i=-5;i<=5;i++){ c.beginPath(); c.moveTo(i*w*.04,-w*.03); c.lineTo(i*w*.045,w*.05); c.stroke(); }
+  }},
+  { id:"walrus", name:"Walross", draw(c,w){
+      c.fillStyle="#d9d4c7";
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,-w*.06);
+        c.quadraticCurveTo(w*.2,-w*.1,w*.3,w*.04);
+        c.lineTo(w*.31,w*.2); c.lineTo(w*.26,w*.13); c.lineTo(w*.23,w*.2); c.lineTo(w*.19,w*.12);
+        c.lineTo(w*.15,w*.18); c.lineTo(w*.11,w*.11); c.lineTo(w*.07,w*.16); c.lineTo(w*.03,w*.1); c.lineTo(0,w*.14);
+        c.closePath(); c.fill(); });
+      c.strokeStyle="#b8b2a3"; c.lineWidth=w*.008;
+      for(let i=-6;i<=6;i++){ c.beginPath(); c.moveTo(i*w*.04,-w*.03); c.lineTo(i*w*.046,w*.1); c.stroke(); }
+  }},
+  { id:"pencil", name:"Bleistift", draw(c,w){
+      c.fillStyle="#1b120b";
+      sym(c,c=>{ c.beginPath(); c.moveTo(w*.025,w*.03); c.quadraticCurveTo(w*.12,w*.0,w*.22,w*.035);
+        c.quadraticCurveTo(w*.12,w*.025,w*.025,w*.05); c.closePath(); c.fill(); });
+  }},
+  { id:"curly", name:"Schnecke", draw(c,w){
+      c.strokeStyle="#4a2c17"; c.lineCap="round"; c.lineWidth=w*.05;
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,w*.0);
+        c.bezierCurveTo(w*.1,-w*.04,w*.2,w*.06,w*.28,w*.03);
+        // Spirale
+        let cx=w*.3, cy=-w*.03; for(let a=Math.PI*.5,r=w*.065;r>w*.012;a-=.3,r*=.94){ c.lineTo(cx+Math.cos(a)*r, cy+Math.sin(a)*r); }
+        c.stroke(); });
+  }},
+  { id:"fu", name:"Fu Manchu", draw(c,w){
+      c.fillStyle="#1e1e1e";
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,-w*.04);
+        c.quadraticCurveTo(w*.15,-w*.06,w*.2,w*.04);
+        c.quadraticCurveTo(w*.22,w*.3,w*.2,w*.5);
+        c.quadraticCurveTo(w*.17,w*.3,w*.14,w*.06);
+        c.quadraticCurveTo(w*.08,w*.04,0,w*.05); c.closePath(); c.fill(); });
+  }},
+  { id:"rainbow", name:"Regenbogen", draw(c,w){
+      const g=c.createLinearGradient(-w*.35,0,w*.35,0);
+      ["#ff595e","#ffca3a","#8ac926","#1982c4","#6a4c93"].forEach((col,i)=>g.addColorStop(i/4,col));
+      c.fillStyle=g;
+      sym(c,c=>{ c.beginPath(); c.moveTo(0,-w*.03);
+        c.bezierCurveTo(w*.12,-w*.09,w*.22,-w*.02,w*.3,w*.0);
+        c.bezierCurveTo(w*.38,w*.02,w*.43,-w*.05,w*.41,-w*.12);
+        c.bezierCurveTo(w*.46,-w*.06,w*.44,w*.06,w*.33,w*.06);
+        c.bezierCurveTo(w*.22,w*.06,w*.12,w*.07,0,w*.04); c.closePath(); c.fill(); });
+  }},
+];
+
+
+
+/* --------------------------- Zustand --------------------------- */
+const state = {
+  hat: 1, stache: 1, mix:false, mixSeed:1,
+  facing:"user", mode:"idle", photo:null, photoFaces:[], stream:null, smooth:[],
+};
+
+function setStatus(t){ $("status").textContent = t; }
+function toast(t){ const el=$("toast"); el.textContent=t; el.style.opacity=1; clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.opacity=0,2000); }
+
+/* --------------------------- Gesichtserkennung --------------------------- */
+let faceMesh = null, latestFaces = [], modelReady = null;
+function loadModel(){
+  if (modelReady) return modelReady;
+  faceMesh = new FaceMesh({ locateFile: f => "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/" + f });
+  faceMesh.setOptions({ maxNumFaces: MAX_FACES, refineLandmarks:false, minDetectionConfidence:.5, minTrackingConfidence:.5, selfieMode:false });
+  faceMesh.onResults(r => { latestFaces = r.multiFaceLandmarks || []; });
+  modelReady = faceMesh.initialize();
+  return modelReady;
+}
+async function detectIn(img, fx, fy, fw, fh){
+  // Ausschnitt (in Anteilen 0..1) erkennen und Landmarken zurück aufs Gesamtbild rechnen
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const sx = fx*W, sy = fy*H, sw = fw*W, sh = fh*H;
+  const k = Math.min(1, 1024/Math.max(sw, sh));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(sw*k)); c.height = Math.max(1, Math.round(sh*k));
+  c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  await faceMesh.reset(); latestFaces = [];
+  await faceMesh.send({ image: c });
+  const out = [];
+  for (const lm of latestFaces){
+    // Gesichter, die am Rand eines Ausschnitts abgeschnitten sind, verwerfen
+    let minX=1,maxX=0,minY=1,maxY=0;
+    for (const p of lm){ if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x; if(p.y<minY)minY=p.y; if(p.y>maxY)maxY=p.y; }
+    const e = .01;
+    if ((minX<e && fx>0) || (maxX>1-e && fx+fw<1) || (minY<e && fy>0) || (maxY>1-e && fy+fh<1)) continue;
+    out.push(lm.map(p => ({ x: fx + p.x*fw, y: fy + p.y*fh, z: p.z*fw })));
+  }
+  return out;
+}
+async function detectStill(img, onProgress){
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const found = [];
+  const add = faces => faces.forEach(lm => {
+    const w = Math.hypot((lm[234].x-lm[454].x)*W, (lm[234].y-lm[454].y)*H);
+    if (!found.some(f => Math.hypot((f[1].x-lm[1].x)*W, (f[1].y-lm[1].y)*H) < w*.6)) found.push(lm);
+  });
+  // Ganzes Bild + überlappende quadratische Ausschnitte in zwei Größen,
+  // damit auch kleine Gesichter auf Gruppenfotos gefunden werden
+  const tiles = [[0,0,1,1]];
+  for (const f of [.65, .42]){
+    const S = f*Math.min(W,H), step = S*.7;
+    const xs = [], ys = [];
+    for (let x=0; x<W-S+1; x+=step) xs.push(x); if (xs.at(-1) < W-S) xs.push(W-S);
+    for (let y=0; y<H-S+1; y+=step) ys.push(y); if (ys.at(-1) < H-S) ys.push(H-S);
+    for (const y of ys) for (const x of xs) tiles.push([x/W, y/H, S/W, S/H]);
+  }
+  for (let i=0; i<tiles.length && found.length < MAX_FACES; i++){
+    onProgress?.(i, tiles.length);
+    add(await detectIn(img, ...tiles[i]));
+  }
+  return found.slice(0, MAX_FACES);
+}
+/* --------------------------- Geometrie --------------------------- */
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  stage.width = Math.round(innerWidth*dpr); stage.height = Math.round(innerHeight*dpr);
+  if (state.mode === "photo") renderPhoto();
+}
+addEventListener("resize", resize);
+
+function fitRect(sw, sh, cw, ch, cover){
+  const s = cover ? Math.max(cw/sw, ch/sh) : Math.min(cw/sw, ch/sh);
+  return { ox:(cw-sw*s)/2, oy:(ch-sh*s)/2, w:sw*s, h:sh*s, cw };
+}
+
+function poseFromLandmarks(lm, r, mirror){
+  const P = i => {
+    let x = r.ox + lm[i].x*r.w; const y = r.oy + lm[i].y*r.h;
+    if (mirror) x = r.cw - x;
+    return { x, y, z: lm[i].z*r.w };
+  };
+  const top=P(10), chin=P(152), L=P(234), R=P(454), eL=P(33), eR=P(263), nose=P(164), lip=P(0);
+  const d3 = (a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+  const faceW = d3(L,R), faceH = d3(top,chin);
+  let vx = eR.x-eL.x, vy = eR.y-eL.y; if (vx < 0){ vx=-vx; vy=-vy; }
+  const angle = Math.atan2(vy, vx);
+  const ux = Math.sin(angle), uy = -Math.cos(angle);
+  return { faceW, angle,
+    hx: top.x + ux*faceH*.06, hy: top.y + uy*faceH*.06,
+    sx: nose.x*.55 + lip.x*.45, sy: nose.y*.55 + lip.y*.45 };
+}
+
+function smoothPose(i, p, alpha){
+  const s = state.smooth[i];
+  if (!s || Math.hypot(s.hx-p.hx, s.hy-p.hy) > p.faceW*.8){ state.smooth[i] = { ...p }; return state.smooth[i]; }
+  for (const k of ["faceW","hx","hy","sx","sy"]) s[k] += (p[k]-s[k])*alpha;
+  let da = p.angle - s.angle; da = Math.atan2(Math.sin(da), Math.cos(da)); s.angle += da*alpha;
+  return s;
+}
+
+function pick(i){
+  if (!state.mix) return { hat: HATS[state.hat], stache: STACHES[state.stache] };
+  const h = 1 + ((i*7 + state.mixSeed*13) % (HATS.length-1));
+  const m = 1 + ((i*5 + state.mixSeed*11 + 3) % (STACHES.length-1));
+  return { hat: HATS[h], stache: STACHES[m] };
+}
+
+function drawAccessories(c, pose, i){
+  const { hat, stache } = pick(i);
+  const w = pose.faceW;
+  if (stache.draw){
+    c.save(); c.translate(pose.sx, pose.sy); c.rotate(pose.angle);
+    c.shadowColor="rgba(0,0,0,.35)"; c.shadowBlur=w*.03; c.shadowOffsetY=w*.01;
+    stache.draw(c, w*1.05); c.restore();
+  }
+  if (hat.draw){
+    c.save(); c.translate(pose.hx, pose.hy); c.rotate(pose.angle);
+    c.shadowColor="rgba(0,0,0,.4)"; c.shadowBlur=w*.05; c.shadowOffsetY=w*.02;
+    hat.draw(c, w*1.1); c.restore();
+  }
+}
+
+function sortFaces(faces, mirror){
+  return faces.map(lm=>({lm,x:lm[1].x})).sort((a,b)=> mirror ? b.x-a.x : a.x-b.x).map(o=>o.lm);
+}
+function setHint(n){
+  const el=$("hint");
+  if (n===0){ el.textContent = state.mode==="photo" ? "Kein Gesicht gefunden 🤔" : "Suche Gesichter …"; el.style.opacity=1; }
+  else { el.textContent = n===1 ? "1 Gesicht erkannt" : `${n} Gesichter erkannt`; el.style.opacity = state.mode==="photo" ? 1 : 0; }
+}
+
+/* --------------------------- Foto-Modus --------------------------- */
+async function openPhoto(file){
+  stopCamera();
+  $("progress").style.display="block"; setStatus("Erkenne Gesichter …");
+  try{
+    const img = new Image();
+    img.src = URL.createObjectURL(file); await img.decode();
+    await loadModel();
+    const faces = await detectStill(img, (i,n)=> setStatus(`Suche Gesichter … ${Math.round(i/n*100)} %`));
+    state.mode = "photo"; state.photo = img; state.photoFaces = sortFaces(faces, false);
+    showUI(); setHint(state.photoFaces.length); renderPhoto();
+  }catch(e){
+    console.error(e); setStatus("Das Foto konnte nicht verarbeitet werden.");
+  }finally{
+    $("progress").style.display="none"; if (!/nicht/.test($("status").textContent)) setStatus("");
+  }
+}
+function composePhoto(c, cw, ch, cover){
+  const img = state.photo, r = fitRect(img.naturalWidth, img.naturalHeight, cw, ch, cover);
+  c.drawImage(img, r.ox, r.oy, r.w, r.h);
+  state.photoFaces.forEach((lm,i)=> drawAccessories(c, poseFromLandmarks(lm, r, false), i));
+}
+function renderPhoto(){
+  if (!state.photo) return;
+  ctx.fillStyle="#0e0e10"; ctx.fillRect(0,0,stage.width,stage.height);
+  // Platz für die Leisten unten lassen
+  const reserve = Math.round(($("bottom").offsetHeight||230) * (stage.width/innerWidth));
+  const topRes  = Math.round(60 * (stage.width/innerWidth));
+  ctx.save(); ctx.translate(0, topRes);
+  composePhoto(ctx, stage.width, stage.height - reserve - topRes, false);
+  ctx.restore();
+}
+function rerender(){ if (state.mode==="photo") renderPhoto(); }
+
+/* --------------------------- Live-Kamera (nur wo erlaubt) --------------------------- */
+function liveAllowed(){
+  try{
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    const fp = document.permissionsPolicy || document.featurePolicy;
+    if (fp?.allowsFeature) return fp.allowsFeature("camera");
+    return window.self === window.top;
+  }catch(e){ return false; }
+}
+async function startCamera(){
+  stopCamera();
+  const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode: state.facing, width:{ideal:1280}, height:{ideal:720} }, audio:false });
+  state.stream = stream; video.srcObject = stream; await video.play();
+  await faceMesh.reset();
+  state.mode = "camera"; state.smooth = []; latestFaces = [];
+  $("shutterWrap").style.display=""; $("saveWrap").style.display="none"; $("btnFlip").style.display="";
+  detectLoop();
+}
+function stopCamera(){
+  if (state.stream){ state.stream.getTracks().forEach(t=>t.stop()); state.stream=null; }
+  $("shutterWrap").style.display="none"; $("saveWrap").style.display=""; $("btnFlip").style.display="none";
+}
+let detecting = false;
+async function detectLoop(){
+  if (detecting) return; detecting = true;
+  while (state.mode === "camera" && state.stream){
+    if (video.readyState >= 2) { try{ await faceMesh.send({ image: video }); }catch(e){ console.warn(e); } }
+    await new Promise(r=>requestAnimationFrame(r));
+  }
+  detecting = false;
+}
+function liveRender(){
+  requestAnimationFrame(liveRender);
+  if (state.mode !== "camera" || video.readyState < 2) return;
+  const vw=video.videoWidth, vh=video.videoHeight; if(!vw) return;
+  const mirror = state.facing === "user";
+  const r = fitRect(vw, vh, stage.width, stage.height, true);
+  ctx.save(); if (mirror){ ctx.translate(stage.width,0); ctx.scale(-1,1); }
+  ctx.drawImage(video, r.ox, r.oy, r.w, r.h); ctx.restore();
+  const faces = sortFaces(latestFaces, mirror);
+  if (faces.length !== state.smooth.length) state.smooth.length = faces.length;
+  setHint(faces.length);
+  faces.forEach((lm,i)=> drawAccessories(ctx, smoothPose(i, poseFromLandmarks(lm, r, mirror), .55), i));
+}
+
+/* --------------------------- Speichern --------------------------- */
+let shotBlob = null, shotUrl = null, downloads = null;
+
+function showShot(blob){
+  shotBlob = blob;
+  if (shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = URL.createObjectURL(blob);
+  $("shotImg").src = shotUrl; $("shot").style.display = "flex";
+}
+$("btnExport").onclick = ()=>{
+  if (!state.photo) return;
+  // In voller Fotoauflösung zusammensetzen
+  const img = state.photo, c = document.createElement("canvas");
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  composePhoto(c.getContext("2d"), c.width, c.height, false);
+  c.toBlob(b => showShot(b), "image/jpeg", .92);
+};
+$("shutter").onclick = ()=>{
+  const f=$("flash"); f.style.opacity=.85; setTimeout(()=>f.style.opacity=0,120);
+  stage.toBlob(b => showShot(b), "image/jpeg", .92);
+};
+$("btnSave").onclick = async ()=>{
+  const filename = `hut-und-bart-${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.jpg`;
+  if (downloads){
+    try{ await downloads.save({ filename, data: shotBlob }); toast("Gespeichert ✔"); }
+    catch(e){ if (e?.code !== "declined") toast("Speichern hier nicht möglich – Bild lange drücken"); }
+    return;
+  }
+  const a=document.createElement("a"); a.href=shotUrl; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+};
+$("btnClose").onclick = ()=> $("shot").style.display="none";
+
+/* --------------------------- Auswahl-Leisten --------------------------- */
+function thumb(item, kind){
+  const c = document.createElement("canvas"); c.width=c.height=104;
+  const x = c.getContext("2d");
+  x.fillStyle="#efe3d3"; x.beginPath(); x.arc(52,52,50,0,Math.PI*2); x.fill();
+  if (kind==="hat"){ x.translate(52,84); item.draw(x, 70); }
+  else { x.translate(52,38); item.draw(x, 105); }
+  return c;
+}
+function buildRow(rowEl, list, kind){
+  list.forEach((it,i)=>{
+    const b=document.createElement("button"); b.className="item"; b.title=it.name; b.setAttribute("aria-label",it.name);
+    if (it.draw) b.appendChild(thumb(it,kind)); else b.innerHTML='<span class="none">✕</span>';
+    b.onclick=()=>{ state[kind]=i; if(state.mix){ state.mix=false; $("btnMix").classList.remove("on"); } updateRows(); rerender(); };
+    rowEl.appendChild(b);
+  });
+}
+function updateRows(){
+  [...$("hatRow").children].forEach((b,i)=>b.classList.toggle("sel", !state.mix && i===state.hat));
+  [...$("stacheRow").children].forEach((b,i)=>b.classList.toggle("sel", !state.mix && i===state.stache));
+}
+buildRow($("hatRow"), HATS, "hat");
+buildRow($("stacheRow"), STACHES, "stache");
+updateRows();
+
+(function drawLogo(){
+  const c=$("logo").getContext("2d");
+  c.fillStyle="#f1c9a5"; c.beginPath(); c.ellipse(170,190,78,92,0,0,Math.PI*2); c.fill();
+  c.fillStyle="#2a1d14"; c.beginPath(); c.ellipse(140,175,8,10,0,0,Math.PI*2); c.ellipse(200,175,8,10,0,0,Math.PI*2); c.fill();
+  c.save(); c.translate(170,222); STACHES[1].draw(c,170); c.restore();
+  c.save(); c.translate(170,118); c.rotate(-.12); HATS[1].draw(c,190); c.restore();
+})();
+
+/* --------------------------- Ereignisse --------------------------- */
+function showUI(){ $("start").style.display="none"; $("ui").style.display="block"; resize(); }
+
+$("btnCam").onclick = $("btnNewCam").onclick = ()=> $("fileCam").click();
+$("btnLib").onclick = $("btnNewLib").onclick = ()=> $("fileLib").click();
+for (const id of ["fileCam","fileLib"]) $(id).onchange = e => { const f=e.target.files[0]; if (f) openPhoto(f); e.target.value=""; };
+
+let framed = false;
+try { framed = window.self !== window.top; } catch(e) { framed = true; }
+if (framed){
+  const url = location.href;
+  $("direct").href = url; $("directUrl").value = url; $("directBox").hidden = false;
+  $("directUrl").onclick = () => $("directUrl").select();
+  $("btnCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast("Link kopiert ✔ – jetzt im Browser einfügen"); }
+    catch(e){ $("directUrl").focus(); $("directUrl").select(); toast("Link markiert – bitte manuell kopieren"); }
+  };
+  $("btnCam").classList.add("secondary");
+}
+if (!framed && navigator.mediaDevices?.getUserMedia){
+  $("btnLive").style.display="";
+  $("btnLive").onclick = async ()=>{
+    try{ $("btnLive").disabled=true; $("progress").style.display="block"; setStatus("Lade Gesichtserkennung …");
+      await loadModel(); await startCamera(); showUI(); setStatus(""); }
+    catch(e){ console.error(e); setStatus(e.name==="NotAllowedError" ? "Kamerazugriff wurde verweigert." : "Live-Kamera nicht verfügbar – nimm ein Foto auf."); }
+    finally{ $("btnLive").disabled=false; $("progress").style.display="none"; }
+  };
+}
+$("btnFlip").onclick = async ()=>{
+  state.facing = state.facing==="user" ? "environment" : "user";
+  try{ await startCamera(); }catch(e){ toast("Kamera-Wechsel nicht möglich"); }
+};
+$("btnMix").onclick = ()=>{
+  state.mix = true; state.mixSeed = (state.mixSeed + 1 + Math.floor(Math.random()*5)) % 997;
+  $("btnMix").classList.add("on"); updateRows(); rerender();
+  toast("Jede Person bekommt etwas anderes 🎲");
+};
+stage.addEventListener("click", ()=>{
+  if (state.mix || state.mode==="idle") return;
+  state.hat = state.hat % (HATS.length-1) + 1; updateRows(); rerender();
+});
+
+resize();
+requestAnimationFrame(liveRender);
+// Modell schon im Hintergrund laden, damit es beim ersten Foto bereit ist
+loadModel().catch(e => { console.error(e); setStatus("Gesichtserkennung konnte nicht geladen werden."); });
+</script>
+</body>
+</html>
